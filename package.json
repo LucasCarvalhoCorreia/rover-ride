@@ -1,0 +1,13 @@
+{
+  "name": "rover-ride",
+  "version": "1.0.0",
+  "main": "index.js",
+  "repository": "https://github.com/LucasCarvalhoCorreia/rover-ride.git",
+  "author": "Lucas Carvalho <lucas.carvalho79@hotmail.com>",
+  "license": "MIT",
+  "devDependencies": {
+    "@playwright/test": "^1.65.1",
+    "@types/node": "^26.6.10"
+  },
+  "scripts": {}
+}

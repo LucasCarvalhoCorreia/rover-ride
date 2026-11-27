@@ -1,0 +1,89 @@
+name: Testes contínuos
+
+on:
+  schedule:
+    - cron: '0 10 * * *' # Todo dia às 07:00 de Brasília (10:00 UTC)
+  workflow_dispatch:     # Execução sob demanda na aba Actions
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+concurrency:
+  group: tests-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://list-only@localhost:5432/none
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: yarn
+      - run: yarn install --frozen-lockfile
+      - name: Listar os testes
+        run: npx playwright test --list
+
+  check-env:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      BASE_URL: ${{ vars.BASE_URL }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - name: Conferir variáveis (sem imprimir valores)
+        run: test -n "$BASE_URL" && test -n "$DATABASE_URL" || { echo "Cadastre BASE_URL (Variable) e DATABASE_URL (Secret) em Settings → Secrets and variables → Actions"; exit 1; }
+      - name: Recusar conexão direta do Supabase (GitHub Actions não possui IPv6)
+        run: |
+          case "$DATABASE_URL" in
+            *@db.*.supabase.co*) echo "DATABASE_URL usa conexão direta. Utilize a string do Session pooler do Supabase."; exit 1 ;;
+          esac
+      - name: Verificar disponibilidade do ambiente alvo
+        run: curl -fsS -o /dev/null --retry 3 --retry-delay 10 --max-time 30 "$BASE_URL"
+
+  regression:
+    needs: [check-env]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BASE_URL: ${{ vars.BASE_URL }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: yarn
+      - run: yarn install --frozen-lockfile
+      - name: Cache dos browsers do Playwright
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
+      - name: Instalar Chromium (sem cache)
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+      - name: Instalar dependências do sistema (com cache)
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+      - name: Rodar suíte de regressão
+        run: npx playwright test
+      - name: Publicar relatório, JUnit e evidências
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-regression-${{ github.run_number }}
+          path: |
+            reports/html
+            reports/junit.xml
+            test-results
+          retention-days: 30
